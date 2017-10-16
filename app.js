@@ -33,6 +33,10 @@ var connector = new builder.ChatConnector({
 server.post('/api/tickets', ticketsApi)
 server.post('/api/messages', connector.listen())
 
+server.listen(listenPort, () => {
+  console.log('%s listening to %s', server.name, process.env.PORT)
+})
+
 var bot = new builder.UniversalBot(connector, (session, args, next) => {
   session.endDialog(`I'm sorry, I did not understand '${session.message.text}'.\nType 'help' to know more about me :)`)
 })
@@ -41,22 +45,21 @@ var luisRecognizer = new builder.LuisRecognizer(process.env.LUIS_MODEL_URL).onEn
   var enabled = context.dialogStack().length === 0
   callback(null, enabled)
 })
-
 bot.recognizer(luisRecognizer)
 
 bot.dialog('Help',
-(session, args, next) => {
-    session.endDialog(`I'm the help desk bot and I can help you create a ticket.\n` +
-        `You can tell me things like _I need to reset my password_ or _I cannot print_.`)
-    builder.Prompts.text(session, 'First, please briefly describe your problem to me.')
-}).triggerAction({
+  (session, args, next) => {
+      session.endDialog(`I'm the help desk bot and I can help you create a ticket or explore the knowledge base.\n` +
+          `You can tell me things like _I need to reset my password_ or _explore hardware articles_.`)
+  }
+).triggerAction({
   matches: 'Help'
 })
 
-// Receive messages from the user and respond by echoing each message back (prefixed with 'You said:')
 bot.dialog('SubmitTicket', [
   (session, args, next) => {
       var category = builder.EntityRecognizer.findEntity(args.intent.entities, 'category')
+      var severity = builder.EntityRecognizer.findEntity(args.intent.entities, 'severity')
 
       if (category && category.resolution.values.length > 0) {
           session.dialogData.category = category.resolution.values[0]
@@ -97,30 +100,30 @@ bot.dialog('SubmitTicket', [
       builder.Prompts.confirm(session, message, { listStyle: builder.ListStyle.button })
   },
   (session, result, next) => {
-    if (result.response) {
-        var data = {
-            category: session.dialogData.category,
-            severity: session.dialogData.severity,
-            description: session.dialogData.description,
-        }
+      if (result.response) {
+          var data = {
+              category: session.dialogData.category,
+              severity: session.dialogData.severity,
+              description: session.dialogData.description,
+          }
 
-        const client = restify.createJsonClient({ url: ticketSubmissionUrl })
+          const client = restify.createJsonClient({ url: ticketSubmissionUrl })
 
-        client.post('/api/tickets', data, (err, request, response, ticketId) => {
-            if (err || ticketId == -1) {
-                session.send('Ooops! Something went wrong while I was saving your ticket. Please try again later.')
-            } else {
-                session.send(new builder.Message(session).addAttachment({
-                    contentType: "application/vnd.microsoft.card.adaptive",
-                    content: createCard(ticketId, data)
-                }))
-            }
+          client.post('/api/tickets', data, (err, request, response, ticketId) => {
+              if (err || ticketId == -1) {
+                  session.send('Ooops! Something went wrong while I was saving your ticket. Please try again later.')
+              } else {
+                  session.send(new builder.Message(session).addAttachment({
+                      contentType: "application/vnd.microsoft.card.adaptive",
+                      content: createCard(ticketId, data)
+                  }))
+              }
 
-            session.endDialog()
-        })
-    } else {
-        session.endDialog('Ok. The ticket was not created. You can start again if you want.')
-    }
+              session.endDialog()
+          })
+      } else {
+          session.endDialog('Ok. The ticket was not created. You can start again if you want.')
+      }
   }
 ]).triggerAction({
   matches: 'SubmitTicket'
@@ -136,10 +139,6 @@ const createCard = (ticketId, data) => {
 
   return JSON.parse(cardTxt)
 }
-
-server.listen(listenPort, () => {
-  console.log('%s listening to %s', server.name, process.env.PORT)
-})
 
 bot.dialog('ExploreKnowledgeBase', [
   (session, args, next) => {
@@ -171,6 +170,7 @@ bot.dialog('ExploreKnowledgeBase', [
       } else {
           category = args.response.entity.replace(/\s\([^)]*\)/,'')
       }
+
       // search by category
       azureSearchQuery('$filter=' + encodeURIComponent(`category eq '${category}'`), (error, result) => {
           if (error) {
